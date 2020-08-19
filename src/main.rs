@@ -16,6 +16,7 @@ use std::task::{Context, Poll};
 use actix_cors::Cors;
 use actix_web::web::{Bytes, Data, Path};
 use actix_web::{get, post, web, App, Error, HttpResponse, HttpServer, Responder};
+use clap::{crate_version, clap_app};
 use futures::Stream;
 use serde::{Deserialize, Serialize};
 use tokio::sync::broadcast::{channel, Receiver, Sender};
@@ -25,7 +26,16 @@ use tokio::sync::broadcast::{channel, Receiver, Sender};
 async fn main() -> std::io::Result<()> {
     env_logger::init();
 
+    let matches = clap_app!(myapp =>
+        (version: crate_version!())
+        (author: "Ronak B.")
+        (about: "A sse-based pubsub with different channels")
+        (@arg HOST: --host +takes_value "Address to host on")
+        (@arg PORT: --port +takes_value "Port to host on")
+    ).get_matches();
+
     let data = BroadcasterMap::create();
+
 
     HttpServer::new(move || {
         App::new()
@@ -39,7 +49,9 @@ async fn main() -> std::io::Result<()> {
             .service(new_client)
             .service(broadcast)
     })
-    .bind("127.0.0.1:8080")?
+    .bind(format!("{}:{}",
+            matches.value_of("HOST").unwrap_or("127.0.0.1"),
+            matches.value_of("PORT").unwrap_or("8080")))?
     .run()
     .await
 }
