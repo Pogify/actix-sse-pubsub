@@ -23,6 +23,7 @@ def task(counter):
 
     try:
         messages = SSEClient("http://localhost:8080/events/channel1")
+        print("yee")
     except OSError:
         return
     for msg in messages:
@@ -33,7 +34,7 @@ def task(counter):
 
 
 threads = []
-for _ in range(10000):
+for _ in range(10):
     t = Thread(target=task, args=(counter,), daemon=True)
     t.start()
     threads.append(t)

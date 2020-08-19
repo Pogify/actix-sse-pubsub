@@ -1,7 +1,9 @@
 /* 
  * This has been built upon the previous work as mentioned in the readme
  *
- * I have changed it so that it can support multiple channels
+ * File is only using the Client struct from previous work which implements stream
+ *
+ * I have changed it so that it can support multiple channels via broadcast
  *
  */
 
@@ -10,15 +12,13 @@ use std::collections::HashMap;
 use std::pin::Pin;
 use std::sync::Mutex;
 use std::task::{Context, Poll};
-use std::time::Duration;
 
 use actix_cors::Cors;
 use actix_web::web::{Bytes, Data, Path};
 use actix_web::{get, post, web, App, Error, HttpResponse, HttpServer, Responder};
-use futures::{Stream, StreamExt};
+use futures::Stream;
 use serde::{Deserialize, Serialize};
-use tokio::sync::mpsc::{channel, Receiver, Sender};
-use tokio::time::{interval_at, Instant};
+use tokio::sync::broadcast::{channel, Receiver, Sender};
 
 
 #[actix_rt::main]
@@ -58,7 +58,6 @@ async fn new_client(channel: Path<String>, broadcasters: Data<Mutex<BroadcasterM
 
     let rx = broadcasters.lock().unwrap().new_client(&channel.into_inner());
 
-
     HttpResponse::Ok()
         .header("content-type", "text/event-stream")
         .no_chunking()
@@ -74,34 +73,27 @@ async fn broadcast(
     let channel = &data.channel;
     let msg = &data.msg;
 
-    match broadcasters.lock().unwrap().get_broadcaster(&channel) {
-        Some(broadcaster) => {
-            broadcaster.lock().unwrap().send(&msg);
-
-            HttpResponse::Ok()
-                .body("msg sent")
-        },
-        None => {
-            HttpResponse::NotFound()
-                .body("you have no clients yet")
-        }
-    }
+    broadcasters.lock().unwrap().broadcast(&channel, &msg);
+    HttpResponse::Ok()
+        .body("idk if it sent or not")
 }
 
 #[derive(Serialize, Deserialize)]
 struct SpotifyData {
     channel: String,
-    msg: String
+    msg: String,
 }
 
 struct BroadcasterMap {
-    broadcasters: HashMap<String, Data<Mutex<Broadcaster>>>,
+    broadcasters: HashMap<String, Sender<Bytes>>,
+    channel_num: usize,
 }
 
 impl BroadcasterMap {
     fn new() -> Self {
         BroadcasterMap {
-            broadcasters: HashMap::<String, Data<Mutex<Broadcaster>>>::new(),
+            broadcasters: HashMap::<String, Sender<Bytes>>::new(),
+            channel_num: 50000
         }
     }
 
@@ -109,83 +101,30 @@ impl BroadcasterMap {
         Data::new(Mutex::new(BroadcasterMap::new()))
     }
 
-    fn new_client(&mut self, channel: &str) -> Client {
-        let s = (&channel).to_string();
+    fn new_client(&mut self, room: &str) -> Client {
+        let s = (&room).to_string();
         match self.broadcasters.get_mut(&s) {
-            Some(broadcaster) => broadcaster.lock().unwrap().new_client(),
+            Some(broadcaster) => Client(broadcaster.subscribe()),
             None => {
-                self.broadcasters.insert(s.to_string(), Broadcaster::create());
-                self.broadcasters.get_mut(&s).unwrap()
-                    .lock().unwrap()
-                    .new_client()
+                let (tx, rx) = channel(self.channel_num);
+                self.broadcasters.insert(s.to_string(), tx);
+                Client(rx)
             }
         }
     }
 
-    fn get_broadcaster(&self, channel: &str) -> Option<&Data<Mutex<Broadcaster>>> {
-        self.broadcasters.get(&(&channel).to_string())
-    }
-}
-
-
-struct Broadcaster {
-    clients: Vec<Sender<Bytes>>,
-}
-
-impl Broadcaster {
-    fn create() -> Data<Mutex<Self>> {
-        // Data ≃ Arc (thread-safe smart pointer)
-        let me = Data::new(Mutex::new(Broadcaster::new()));
-
-        // ping clients every 10 seconds to see if they are alive
-        Broadcaster::spawn_ping(me.clone());
-
-        me
-    }
-
-    fn new() -> Self {
-        Broadcaster {
-            clients: Vec::<Sender<Bytes>>::new(),
-        }
-    }
-
-    fn spawn_ping(me: Data<Mutex<Self>>) {
-        actix_rt::spawn(async move {
-            let mut task = interval_at(Instant::now(), Duration::from_secs(10));
-            while let Some(_) = task.next().await {
-                me.lock().unwrap().remove_stale_clients();
-            }
-        })
-    }
-
-    fn remove_stale_clients(&mut self) {
-        let mut ok_clients = Vec::new();
-        for client in self.clients.iter() {
-            let result = client.clone().try_send(Bytes::from("data: ping\n\n"));
-
-            if let Ok(()) = result {
-                ok_clients.push(client.clone());
-            }
-        }
-        self.clients = ok_clients;
-    }
-
-    fn new_client(&mut self) -> Client {
-        let (tx, rx) = channel(100);
-
-        tx.clone()
-            .try_send(Bytes::from("data: connected\n\n"))
-            .unwrap();
-
-        self.clients.push(tx);
-        Client(rx)
-    }
-
-    fn send(&self, msg: &str) {
-        let msg = Bytes::from(["data: ", msg, "\n\n"].concat());
-
-        for client in self.clients.iter() {
-            client.clone().try_send(msg.clone()).unwrap_or(());
+    fn broadcast(&self, channel: &str, msg: &str) {
+        let s = (&channel).to_string();
+        let encoded_msg = Bytes::from(["data: ", msg, "\n\n"].concat());
+        // TODO return http responses with according messages
+        match self.broadcasters.get(&s) {
+            Some(broadcaster) => {
+                match broadcaster.send(encoded_msg) {
+                    Ok(_) => (),
+                    Err(_e) => (),
+                }
+            },
+            None => (),
         }
     }
 }
@@ -200,8 +139,10 @@ impl Stream for Client {
         mut self: Pin<&mut Self>,
         cx: &mut Context<'_>,
     ) -> Poll<Option<Self::Item>> {
+        // match needed for ``Poll::Ready(Some(Err(v)))`` case
         match Pin::new(&mut self.0).poll_next(cx) {
-            Poll::Ready(Some(v)) => Poll::Ready(Some(Ok(v))),
+            Poll::Ready(Some(Ok(v))) => Poll::Ready(Some(Ok(v))),
+            Poll::Ready(Some(Err(_))) => Poll::Ready(None),
             Poll::Ready(None) => Poll::Ready(None),
             Poll::Pending => Poll::Pending,
         }
