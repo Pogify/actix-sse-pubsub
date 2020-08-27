@@ -1,40 +1,48 @@
+import asyncio
 from sseclient import SSEClient
+
+import logging
+from itertools import count
 from time import sleep
 from threading import Lock, Thread
 
-class Counter(Thread):
+logging.basicConfig(filename="sse.log", level=logging.DEBUG)
+
+class Counter:
     def __init__(self):
-        super().__init__()
+        # super().__init__()
         self.daemon = True
         self.counter = 0
-        self.connections = []
+        self._number_of_read = 0
+        self._counter = count()
         self.lock = Lock()
 
-    def increment(self, connection):
+    def increment(self):
         with self.lock:
             self.counter += 1
-            # self.connections.append(connection)
-            print(self.counter, end='\r')
+            print(self.counter, end='\r', flush=True)
+
 
 counter = Counter()
-counter.start()
+# counter.start()
+
 
 def task(counter):
-
     try:
         messages = SSEClient("http://localhost:8080/events/channel1")
-        print("yee")
-    except OSError:
+        counter.increment()
+    except OSError as e:
+        logging.error(str(e))
         return
     for msg in messages:
-        if str(msg) == "connected":
-            counter.increment(messages)
         if "secret" in str(msg):
-            counter.increment(messages)
+            counter.increment()
 
 
 threads = []
-for _ in range(10):
+for i in range(5000):
+#     if i > 4000 and i % 1000 == 0:
+#         sleep(1)
     t = Thread(target=task, args=(counter,), daemon=True)
     t.start()
     threads.append(t)

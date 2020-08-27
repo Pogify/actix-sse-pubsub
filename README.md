@@ -5,15 +5,12 @@ This is derived from the sse in https://github.com/actix/examples which is under
 ## Usage
 
 ```
-cargo build --release
+cargo run --release
 ```
 
-The executable will be in ``target/release``
-
-
-To benchmark, run 
+To benchmark, run multiple instances of
 
 ```
-node benchmark.js
+python3 benchmark.py
 ```
 

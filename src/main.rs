@@ -12,6 +12,7 @@ use std::collections::HashMap;
 use std::pin::Pin;
 use std::sync::Mutex;
 use std::task::{Context, Poll};
+use std::time::Duration;
 
 use actix_cors::Cors;
 use actix_web::web::{Bytes, Data, Path};
@@ -20,6 +21,7 @@ use clap::{crate_version, clap_app};
 use futures::Stream;
 use serde::{Deserialize, Serialize};
 use tokio::sync::broadcast::{channel, Receiver, Sender};
+use tokio::time::{interval_at, Instant};
 
 
 #[actix_rt::main]
@@ -52,6 +54,7 @@ async fn main() -> std::io::Result<()> {
     .bind(format!("{}:{}",
             matches.value_of("HOST").unwrap_or("127.0.0.1"),
             matches.value_of("PORT").unwrap_or("8080")))?
+    .maxconn(500000)
     .run()
     .await
 }
@@ -96,6 +99,24 @@ struct SpotifyData {
     msg: String,
 }
 
+struct Broadcaster {
+    senders: Vec<Sender<Bytes>>,
+    num_clients: u32,
+}
+
+impl Broadcaster {
+    fn new() -> Broadcaster {
+        Broadcaster {
+            senders: Vec::new(),
+            num_clients: 1,
+        }
+    }
+
+    // fn send(&msg) {
+    //     
+    // }
+}
+
 struct BroadcasterMap {
     broadcasters: HashMap<String, Sender<Bytes>>,
     channel_num: usize,
@@ -105,12 +126,21 @@ impl BroadcasterMap {
     fn new() -> Self {
         BroadcasterMap {
             broadcasters: HashMap::<String, Sender<Bytes>>::new(),
-            channel_num: 50000
+            channel_num: 500000
         }
     }
 
     fn create() -> Data<Mutex<Self>> {
         Data::new(Mutex::new(BroadcasterMap::new()))
+    }
+
+    fn spawn_ping(tx: Sender<Bytes>) {
+        actix_rt::spawn(async move {
+            let mut task = interval_at(Instant::now(), Duration::from_secs(10));
+            while let _ = task.tick().await {
+                tx.send(Bytes::from("data: ping\n\n"));
+            }
+        });
     }
 
     fn new_client(&mut self, room: &str) -> Client {
@@ -119,6 +149,7 @@ impl BroadcasterMap {
             Some(broadcaster) => Client(broadcaster.subscribe()),
             None => {
                 let (tx, rx) = channel(self.channel_num);
+                // BroadcasterMap::spawn_ping(tx.clone());
                 self.broadcasters.insert(s.to_string(), tx);
                 Client(rx)
             }
