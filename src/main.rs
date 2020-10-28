@@ -41,11 +41,7 @@ async fn main() -> std::io::Result<()> {
 
     HttpServer::new(move || {
         App::new()
-            .wrap(
-                Cors::new()
-                    .allowed_origin("*")
-                    .allowed_methods(vec!["GET", "POST"])
-                    .finish())
+            .wrap(Cors::new().finish())
             .app_data(data.clone())
             .service(index)
             .service(new_client)
