@@ -1,6 +1,6 @@
 # Actix-sse-pubsub
 
-This is derived from the sse in https://github.com/actix/examples which is under the Apache license.
+This is derived from the pubsub in https://github.com/actix/examples which is under the Apache license.
 
 ## Usage
 
