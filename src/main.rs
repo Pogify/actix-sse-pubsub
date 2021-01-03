@@ -10,7 +10,7 @@
 
 use std::collections::HashMap;
 use std::pin::Pin;
-use std::sync::Mutex;
+use std::sync::RwLock;
 use std::task::{Context, Poll};
 use std::time::Duration;
 
@@ -65,9 +65,9 @@ async fn index() -> impl Responder {
 }
 
 #[get("/events/{channel}")]
-async fn new_client(channel: Path<String>, broadcasters: Data<Mutex<BroadcasterMap>>) -> impl Responder {
+async fn new_client(channel: Path<String>, broadcasters: Data<RwLock<BroadcasterMap>>) -> impl Responder {
 
-    let rx = broadcasters.lock().unwrap().new_client(&channel.into_inner());
+    let rx = broadcasters.write().unwrap().new_client(&channel.into_inner());
 
     HttpResponse::Ok()
         .header("content-type", "text/event-stream")
@@ -78,13 +78,13 @@ async fn new_client(channel: Path<String>, broadcasters: Data<Mutex<BroadcasterM
 #[post("/broadcast")]
 async fn broadcast(
     data: web::Json<SpotifyData>,
-    broadcasters: Data<Mutex<BroadcasterMap>>,
+    broadcasters: Data<RwLock<BroadcasterMap>>,
 ) -> impl Responder {
 
     let channel = &data.channel;
     let msg = &data.msg;
 
-    broadcasters.lock().unwrap().broadcast(&channel, &msg);
+    broadcasters.read().unwrap().broadcast(&channel, &msg);
     HttpResponse::Ok()
         .body("idk if it sent or not")
 }
@@ -126,8 +126,8 @@ impl BroadcasterMap {
         }
     }
 
-    fn create() -> Data<Mutex<Self>> {
-        Data::new(Mutex::new(BroadcasterMap::new()))
+    fn create() -> Data<RwLock<Self>> {
+        Data::new(RwLock::new(BroadcasterMap::new()))
     }
 
     fn spawn_ping(tx: Sender<Bytes>) {
