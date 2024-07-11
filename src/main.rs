@@ -19,6 +19,7 @@ use actix_web::web::{Bytes, Data, Path};
 use actix_web::{get, post, web, App, Error, HttpResponse, HttpServer, Responder};
 use clap::{crate_version, clap_app};
 use futures::Stream;
+use openssl::ssl::{SslAcceptor, SslFiletype, SslMethod};
 use serde::{Deserialize, Serialize};
 use tokio::sync::broadcast::{channel, Receiver, Sender};
 use tokio::time::{interval_at, Instant};
@@ -34,25 +35,42 @@ async fn main() -> std::io::Result<()> {
         (about: "A sse-based pubsub with different channels")
         (@arg HOST: --host +takes_value "Address to host on")
         (@arg PORT: --port +takes_value "Port to host on")
+        (@arg KEY: --key +takes_value "SSL Private Key file")
+        (@arg CERT: --cert +takes_value "Certificate file")
     ).get_matches();
 
     let data = BroadcasterMap::create();
 
 
-    HttpServer::new(move || {
+    let server = HttpServer::new(move || {
         App::new()
             .wrap(Cors::new().finish())
             .app_data(data.clone())
             .service(index)
             .service(new_client)
             .service(broadcast)
-    })
-    .bind(format!("{}:{}",
+    });
+    let host = format!("{}:{}",
             matches.value_of("HOST").unwrap_or("127.0.0.1"),
-            matches.value_of("PORT").unwrap_or("8080")))?
-    .maxconn(500000)
-    .run()
-    .await
+            matches.value_of("PORT").unwrap_or("8080"));
+
+    let server = match (matches.value_of("KEY"), matches.value_of("CERT")) {
+        (Some(keyfile), Some(certfile)) => {
+            let mut builder = SslAcceptor::mozilla_intermediate(SslMethod::tls()).unwrap();
+            builder
+                .set_private_key_file(keyfile, SslFiletype::PEM)
+                .expect("Invalid private key provided");
+            builder.set_certificate_chain_file(certfile).expect("Invalid certificate provided");
+            server.bind_openssl(host, builder)
+        },
+        _ => server.bind(host)
+    };
+
+    server
+        .expect("Failed to bind")
+        .maxconn(500000)
+        .run()
+        .await
 }
 
 #[get("/")]
